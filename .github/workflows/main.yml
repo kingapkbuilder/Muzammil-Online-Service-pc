@@ -1,4 +1,4 @@
-name: Build Muzammil Online Service PC
+name: Build Native Muzammil Online Service
 
 on:
   workflow_dispatch:
@@ -15,40 +15,34 @@ jobs:
 
     steps:
 
-      # =========================
-      # 1. CHECKOUT
-      # =========================
       - name: Checkout
         uses: actions/checkout@v4
 
-
-      # =========================
-      # 2. FIND PC ZIP
-      # =========================
-      - name: Find PC ZIP
+      # 1. Find Native PC Project ZIP
+      - name: Find Native PC ZIP
         shell: powershell
         run: |
           $zip = Get-ChildItem -Path . -Recurse `
-            -Filter "Muzammil_Online_Service_PC_Windows_Desktop_v2.zip" |
+            -Filter "Muzammil_Online_Service_PC_Native_Windows_Project.zip" |
             Select-Object -First 1
 
           if (-not $zip) {
-            Write-Host "ERROR: PC ZIP nahi mila."
+            Write-Host "ERROR: Native PC ZIP nahi mila."
+            Write-Host "Available ZIP files:"
             Get-ChildItem -Path . -Recurse -Filter "*.zip"
             exit 1
           }
 
-          Write-Host "PC ZIP FOUND:"
+          Write-Host "===================================="
+          Write-Host "NATIVE PC PROJECT FOUND"
           Write-Host $zip.FullName
+          Write-Host "===================================="
 
           "PC_ZIP=$($zip.FullName)" |
             Out-File -FilePath $env:GITHUB_ENV -Append
 
-
-      # =========================
-      # 3. EXTRACT PROJECT
-      # =========================
-      - name: Extract PC Project
+      # 2. Extract project
+      - name: Extract Native PC Project
         shell: powershell
         run: |
           if (Test-Path "pc_project") {
@@ -62,176 +56,187 @@ jobs:
             -DestinationPath "pc_project" `
             -Force
 
-          Write-Host "PC PROJECT EXTRACTED."
+          Write-Host "Native PC project extracted."
 
-
-      # =========================
-      # 4. FIND MAIN.PY
-      # =========================
-      - name: Find Python Project
+      # 3. Show project files
+      - name: Inspect Native Project
         shell: powershell
         run: |
-          $main = Get-ChildItem `
-            -Path "pc_project" `
-            -Recurse `
-            -Filter "main.py" |
-            Select-Object -First 1
+          Write-Host "PROJECT FILES:"
+          Get-ChildItem "pc_project" -Recurse |
+            Select-Object FullName
 
-          if (-not $main) {
-            Write-Host "ERROR: main.py nahi mila."
-            Get-ChildItem "pc_project" -Recurse
-            exit 1
-          }
+      # 4. Install Qt / C++ environment
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
 
-          $root = $main.Directory.FullName
-
-          Write-Host "PYTHON PROJECT:"
-          Write-Host $root
-
-          "PC_ROOT=$root" |
-            Out-File -FilePath $env:GITHUB_ENV -Append
-
-
-      # =========================
-      # 5. PYTHON
-      # =========================
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-
-      # =========================
-      # 6. INSTALL PACKAGES
-      # =========================
-      - name: Install Dependencies
-        working-directory: ${{ env.PC_ROOT }}
+      # 5. Install Python processing dependencies
+      - name: Install Python Dependencies
         shell: powershell
         run: |
           python -m pip install --upgrade pip
+          pip install PyMuPDF Pillow pyinstaller
 
-          pip install PySide6
-          pip install PyMuPDF
-          pip install pyinstaller
-
-          if (Test-Path "requirements.txt") {
-            pip install -r requirements.txt
-          }
-
-
-      # =========================
-      # 7. CHECK PYTHON
-      # =========================
-      - name: Check Python
-        working-directory: ${{ env.PC_ROOT }}
+      # 6. Find Python engine
+      - name: Find Python Engine
         shell: powershell
         run: |
-          python --version
-
-          python -m py_compile main.py
-
-          Write-Host "PYTHON CHECK SUCCESSFUL."
-
-
-      # =========================
-      # 8. CLEAN OLD BUILD
-      # =========================
-      - name: Clean Build
-        working-directory: ${{ env.PC_ROOT }}
-        shell: powershell
-        run: |
-          if (Test-Path "build") {
-            Remove-Item "build" -Recurse -Force
-          }
-
-          if (Test-Path "dist") {
-            Remove-Item "dist" -Recurse -Force
-          }
-
-          Write-Host "OLD BUILD CLEANED."
-
-
-      # =========================
-      # 9. BUILD ONE FILE EXE
-      # =========================
-      - name: Build Windows EXE
-        working-directory: ${{ env.PC_ROOT }}
-        shell: powershell
-        run: |
-
-          pyinstaller `
-            --noconfirm `
-            --clean `
-            --windowed `
-            --onefile `
-            --name "Muzammil Online Service" `
-            --add-data "index.html;." `
-            main.py
-
-          Write-Host "PYINSTALLER BUILD FINISHED."
-
-
-      # =========================
-      # 10. VERIFY EXE
-      # =========================
-      - name: Verify EXE
-        working-directory: ${{ env.PC_ROOT }}
-        shell: powershell
-        run: |
-
-          $exe = Get-ChildItem `
-            -Path "dist" `
-            -Filter "*.exe" |
+          $py = Get-ChildItem `
+            -Path "pc_project" `
+            -Recurse `
+            -Filter "*.py" |
             Select-Object -First 1
 
-          if (-not $exe) {
-            Write-Host "ERROR: EXE generate nahi hua."
+          if ($py) {
+            Write-Host "Python engine found:"
+            Write-Host $py.FullName
+
+            "PYTHON_FILE=$($py.FullName)" |
+              Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+          else {
+            Write-Host "No Python file found."
+          }
+
+      # 7. Compile C++ native application
+      - name: Build Native C++ Application
+        shell: powershell
+        run: |
+
+          $cpp = Get-ChildItem `
+            -Path "pc_project" `
+            -Recurse `
+            -Filter "*.cpp" |
+            Select-Object -First 1
+
+          if (-not $cpp) {
+            Write-Host "ERROR: C++ source nahi mila."
             exit 1
           }
 
-          Write-Host ""
-          Write-Host "======================================"
-          Write-Host " MUZZAMMIL ONLINE SERVICE"
-          Write-Host " WINDOWS EXE READY"
-          Write-Host "======================================"
-          Write-Host "EXE NAME:"
-          Write-Host $exe.Name
-          Write-Host ""
-          Write-Host "EXE SIZE:"
-          Write-Host $exe.Length
-          Write-Host ""
-          Write-Host "EXE PATH:"
-          Write-Host $exe.FullName
-          Write-Host "======================================"
+          Write-Host "C++ SOURCE:"
+          Write-Host $cpp.FullName
 
+          New-Item -ItemType Directory -Path "native_build" `
+            -Force | Out-Null
 
-      # =========================
-      # 11. COPY EXE TO ROOT
-      # =========================
-      - name: Prepare EXE
-        working-directory: ${{ env.PC_ROOT }}
+          cl.exe `
+            /EHsc `
+            /std:c++17 `
+            "$($cpp.FullName)" `
+            /Fe:"native_build\Muzammil-Online-Service.exe"
+
+          if (-not (Test-Path "native_build\Muzammil-Online-Service.exe")) {
+            Write-Host "ERROR: Native EXE nahi bana."
+            exit 1
+          }
+
+          Write-Host "NATIVE C++ EXE READY."
+
+      # 8. Build Python helper if available
+      - name: Build Python Processing Engine
         shell: powershell
         run: |
 
-          $exe = Get-ChildItem `
-            -Path "dist" `
-            -Filter "*.exe" |
+          if (-not $env:PYTHON_FILE) {
+            Write-Host "Python engine not found - skipping."
+            exit 0
+          }
+
+          python -m py_compile "$env:PYTHON_FILE"
+
+          Write-Host "Python syntax check successful."
+
+      # 9. Verify native application
+      - name: Verify Windows Application
+        shell: powershell
+        run: |
+
+          $exe = "native_build\Muzammil-Online-Service.exe"
+
+          if (-not (Test-Path $exe)) {
+            Write-Host "ERROR: Final EXE missing."
+            exit 1
+          }
+
+          $file = Get-Item $exe
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host " MUZAMMIL ONLINE SERVICE"
+          Write-Host " NATIVE WINDOWS APPLICATION"
+          Write-Host "=========================================="
+          Write-Host "EXE:"
+          Write-Host $file.FullName
+          Write-Host "SIZE:"
+          Write-Host $file.Length
+          Write-Host "=========================================="
+
+      # 10. Install Inno Setup
+      - name: Install Inno Setup
+        shell: powershell
+        run: |
+          choco install innosetup -y --no-progress
+
+      # 11. Find installer script
+      - name: Find Installer Script
+        shell: powershell
+        run: |
+
+          $iss = Get-ChildItem `
+            -Path "pc_project" `
+            -Recurse `
+            -Filter "*.iss" |
             Select-Object -First 1
 
+          if (-not $iss) {
+            Write-Host "ERROR: Inno Setup .iss file nahi mila."
+            exit 1
+          }
+
+          Write-Host "Installer script:"
+          Write-Host $iss.FullName
+
+          "ISS_FILE=$($iss.FullName)" |
+            Out-File -FilePath $env:GITHUB_ENV -Append
+
+      # 12. Build proper Windows Setup
+      - name: Build Windows Installer
+        shell: powershell
+        run: |
+
+          New-Item -ItemType Directory `
+            -Path "installer_output" `
+            -Force | Out-Null
+
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            "$env:ISS_FILE"
+
+          $setup = Get-ChildItem `
+            -Path "pc_project" `
+            -Recurse `
+            -Filter "*Setup*.exe" |
+            Select-Object -First 1
+
+          if (-not $setup) {
+            Write-Host "ERROR: Setup EXE generate nahi hua."
+            exit 1
+          }
+
           Copy-Item `
-            $exe.FullName `
-            "$env:GITHUB_WORKSPACE\Muzammil-Online-Service-PC.exe" `
+            $setup.FullName `
+            "installer_output\Muzammil-Online-Service-Setup.exe" `
             -Force
 
-          Write-Host "EXE READY FOR ARTIFACT."
-
-
-      # =========================
-      # 12. UPLOAD DIRECT EXE
-      # =========================
-      - name: Upload Direct EXE
+      # 13. Upload final installer
+      - name: Upload Windows Setup
         uses: actions/upload-artifact@v4
         with:
-          name: Muzammil-Online-Service-PC-EXE
-          path: Muzammil-Online-Service-PC.exe
+          name: Muzammil-Online-Service-Windows-Setup
+          path: installer_output\Muzammil-Online-Service-Setup.exe
           if-no-files-found: error
