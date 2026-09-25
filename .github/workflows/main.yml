@@ -14,24 +14,40 @@ jobs:
     runs-on: windows-latest
 
     steps:
+
+      # =========================
+      # 1. CHECKOUT
+      # =========================
       - name: Checkout
         uses: actions/checkout@v4
 
+
+      # =========================
+      # 2. FIND PC ZIP
+      # =========================
       - name: Find PC ZIP
         shell: powershell
         run: |
-          $zip = Get-ChildItem -Path . -Recurse -Filter "Muzammil_Online_Service_PC_Windows_Desktop_v2.zip" |
+          $zip = Get-ChildItem -Path . -Recurse `
+            -Filter "Muzammil_Online_Service_PC_Windows_Desktop_v2.zip" |
             Select-Object -First 1
 
           if (-not $zip) {
-            Write-Host "PC ZIP nahi mila."
-            Get-ChildItem -Recurse -Filter "*.zip"
+            Write-Host "ERROR: PC ZIP nahi mila."
+            Get-ChildItem -Path . -Recurse -Filter "*.zip"
             exit 1
           }
 
-          Write-Host "Found: $($zip.FullName)"
-          "PC_ZIP=$($zip.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "PC ZIP FOUND:"
+          Write-Host $zip.FullName
 
+          "PC_ZIP=$($zip.FullName)" |
+            Out-File -FilePath $env:GITHUB_ENV -Append
+
+
+      # =========================
+      # 3. EXTRACT PROJECT
+      # =========================
       - name: Extract PC Project
         shell: powershell
         run: |
@@ -40,93 +56,182 @@ jobs:
           }
 
           New-Item -ItemType Directory -Path "pc_project" | Out-Null
-          Expand-Archive -Path "$env:PC_ZIP" -DestinationPath "pc_project" -Force
 
-          Write-Host "PC project extracted."
+          Expand-Archive `
+            -Path "$env:PC_ZIP" `
+            -DestinationPath "pc_project" `
+            -Force
 
+          Write-Host "PC PROJECT EXTRACTED."
+
+
+      # =========================
+      # 4. FIND MAIN.PY
+      # =========================
       - name: Find Python Project
         shell: powershell
         run: |
-          $main = Get-ChildItem -Path "pc_project" -Recurse -Filter "main.py" |
+          $main = Get-ChildItem `
+            -Path "pc_project" `
+            -Recurse `
+            -Filter "main.py" |
             Select-Object -First 1
 
           if (-not $main) {
-            Write-Host "main.py nahi mila."
+            Write-Host "ERROR: main.py nahi mila."
             Get-ChildItem "pc_project" -Recurse
             exit 1
           }
 
           $root = $main.Directory.FullName
-          Write-Host "PC Project: $root"
-          "PC_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+          Write-Host "PYTHON PROJECT:"
+          Write-Host $root
+
+          "PC_ROOT=$root" |
+            Out-File -FilePath $env:GITHUB_ENV -Append
+
+
+      # =========================
+      # 5. PYTHON
+      # =========================
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+
+      # =========================
+      # 6. INSTALL PACKAGES
+      # =========================
       - name: Install Dependencies
         working-directory: ${{ env.PC_ROOT }}
         shell: powershell
         run: |
           python -m pip install --upgrade pip
-          pip install PySide6 PyMuPDF pyinstaller
+
+          pip install PySide6
+          pip install PyMuPDF
+          pip install pyinstaller
 
           if (Test-Path "requirements.txt") {
             pip install -r requirements.txt
           }
 
+
+      # =========================
+      # 7. CHECK PYTHON
+      # =========================
       - name: Check Python
         working-directory: ${{ env.PC_ROOT }}
         shell: powershell
         run: |
           python --version
+
           python -m py_compile main.py
 
+          Write-Host "PYTHON CHECK SUCCESSFUL."
+
+
+      # =========================
+      # 8. CLEAN OLD BUILD
+      # =========================
+      - name: Clean Build
+        working-directory: ${{ env.PC_ROOT }}
+        shell: powershell
+        run: |
+          if (Test-Path "build") {
+            Remove-Item "build" -Recurse -Force
+          }
+
+          if (Test-Path "dist") {
+            Remove-Item "dist" -Recurse -Force
+          }
+
+          Write-Host "OLD BUILD CLEANED."
+
+
+      # =========================
+      # 9. BUILD ONE FILE EXE
+      # =========================
       - name: Build Windows EXE
         working-directory: ${{ env.PC_ROOT }}
         shell: powershell
         run: |
+
           pyinstaller `
             --noconfirm `
             --clean `
             --windowed `
+            --onefile `
             --name "Muzammil Online Service" `
             --add-data "index.html;." `
             main.py
 
+          Write-Host "PYINSTALLER BUILD FINISHED."
+
+
+      # =========================
+      # 10. VERIFY EXE
+      # =========================
       - name: Verify EXE
         working-directory: ${{ env.PC_ROOT }}
         shell: powershell
         run: |
-          $exe = Get-ChildItem -Path "dist" -Recurse -Filter "*.exe" |
+
+          $exe = Get-ChildItem `
+            -Path "dist" `
+            -Filter "*.exe" |
             Select-Object -First 1
 
           if (-not $exe) {
-            Write-Host "EXE generate nahi hua."
+            Write-Host "ERROR: EXE generate nahi hua."
             exit 1
           }
 
-          Write-Host "================================"
-          Write-Host "MUZAMMIL ONLINE SERVICE"
-          Write-Host "WINDOWS EXE READY"
-          Write-Host "================================"
-          Get-Item $exe.FullName | Format-List Name,Length,FullName
+          Write-Host ""
+          Write-Host "======================================"
+          Write-Host " MUZZAMMIL ONLINE SERVICE"
+          Write-Host " WINDOWS EXE READY"
+          Write-Host "======================================"
+          Write-Host "EXE NAME:"
+          Write-Host $exe.Name
+          Write-Host ""
+          Write-Host "EXE SIZE:"
+          Write-Host $exe.Length
+          Write-Host ""
+          Write-Host "EXE PATH:"
+          Write-Host $exe.FullName
+          Write-Host "======================================"
 
-      - name: Package PC Software
+
+      # =========================
+      # 11. COPY EXE TO ROOT
+      # =========================
+      - name: Prepare EXE
         working-directory: ${{ env.PC_ROOT }}
         shell: powershell
         run: |
-          Compress-Archive `
-            -Path "dist\*" `
-            -DestinationPath "$env:GITHUB_WORKSPACE\Muzammil-Online-Service-PC-Windows.zip" `
+
+          $exe = Get-ChildItem `
+            -Path "dist" `
+            -Filter "*.exe" |
+            Select-Object -First 1
+
+          Copy-Item `
+            $exe.FullName `
+            "$env:GITHUB_WORKSPACE\Muzammil-Online-Service-PC.exe" `
             -Force
 
-      - name: Upload Windows EXE
+          Write-Host "EXE READY FOR ARTIFACT."
+
+
+      # =========================
+      # 12. UPLOAD DIRECT EXE
+      # =========================
+      - name: Upload Direct EXE
         uses: actions/upload-artifact@v4
         with:
-          name: Muzammil-Online-Service-PC-Windows
-          path: |
-            Muzammil-Online-Service-PC-Windows.zip
-            ${{ env.PC_ROOT }}\dist\*.exe
+          name: Muzammil-Online-Service-PC-EXE
+          path: Muzammil-Online-Service-PC.exe
           if-no-files-found: error
