@@ -1,0 +1,132 @@
+name: Build Muzammil Online Service PC
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Find PC ZIP
+        shell: powershell
+        run: |
+          $zip = Get-ChildItem -Path . -Recurse -Filter "Muzammil_Online_Service_PC_Windows_Desktop_v2.zip" |
+            Select-Object -First 1
+
+          if (-not $zip) {
+            Write-Host "PC ZIP nahi mila."
+            Get-ChildItem -Recurse -Filter "*.zip"
+            exit 1
+          }
+
+          Write-Host "Found: $($zip.FullName)"
+          "PC_ZIP=$($zip.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Extract PC Project
+        shell: powershell
+        run: |
+          if (Test-Path "pc_project") {
+            Remove-Item "pc_project" -Recurse -Force
+          }
+
+          New-Item -ItemType Directory -Path "pc_project" | Out-Null
+          Expand-Archive -Path "$env:PC_ZIP" -DestinationPath "pc_project" -Force
+
+          Write-Host "PC project extracted."
+
+      - name: Find Python Project
+        shell: powershell
+        run: |
+          $main = Get-ChildItem -Path "pc_project" -Recurse -Filter "main.py" |
+            Select-Object -First 1
+
+          if (-not $main) {
+            Write-Host "main.py nahi mila."
+            Get-ChildItem "pc_project" -Recurse
+            exit 1
+          }
+
+          $root = $main.Directory.FullName
+          Write-Host "PC Project: $root"
+          "PC_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Dependencies
+        working-directory: ${{ env.PC_ROOT }}
+        shell: powershell
+        run: |
+          python -m pip install --upgrade pip
+          pip install PySide6 PyMuPDF pyinstaller
+
+          if (Test-Path "requirements.txt") {
+            pip install -r requirements.txt
+          }
+
+      - name: Check Python
+        working-directory: ${{ env.PC_ROOT }}
+        shell: powershell
+        run: |
+          python --version
+          python -m py_compile main.py
+
+      - name: Build Windows EXE
+        working-directory: ${{ env.PC_ROOT }}
+        shell: powershell
+        run: |
+          pyinstaller `
+            --noconfirm `
+            --clean `
+            --windowed `
+            --name "Muzammil Online Service" `
+            --add-data "index.html;." `
+            main.py
+
+      - name: Verify EXE
+        working-directory: ${{ env.PC_ROOT }}
+        shell: powershell
+        run: |
+          $exe = Get-ChildItem -Path "dist" -Recurse -Filter "*.exe" |
+            Select-Object -First 1
+
+          if (-not $exe) {
+            Write-Host "EXE generate nahi hua."
+            exit 1
+          }
+
+          Write-Host "================================"
+          Write-Host "MUZAMMIL ONLINE SERVICE"
+          Write-Host "WINDOWS EXE READY"
+          Write-Host "================================"
+          Get-Item $exe.FullName | Format-List Name,Length,FullName
+
+      - name: Package PC Software
+        working-directory: ${{ env.PC_ROOT }}
+        shell: powershell
+        run: |
+          Compress-Archive `
+            -Path "dist\*" `
+            -DestinationPath "$env:GITHUB_WORKSPACE\Muzammil-Online-Service-PC-Windows.zip" `
+            -Force
+
+      - name: Upload Windows EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: Muzammil-Online-Service-PC-Windows
+          path: |
+            Muzammil-Online-Service-PC-Windows.zip
+            ${{ env.PC_ROOT }}\dist\*.exe
+          if-no-files-found: error
