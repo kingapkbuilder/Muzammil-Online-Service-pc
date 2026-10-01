@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   build-windows-setup:
+    name: Build Muzammil Online Service Windows Installer
     runs-on: windows-latest
 
     steps:
@@ -22,18 +23,115 @@ jobs:
         with:
           node-version: 22
 
+      - name: Extract project ZIP
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Filter '*.zip' -File | Select-Object -First 1
+
+          if (-not $zip) {
+            throw "Project ZIP file was not found."
+          }
+
+          $extract = Join-Path $env:GITHUB_WORKSPACE '_project'
+
+          if (Test-Path $extract) {
+            Remove-Item $extract -Recurse -Force
+          }
+
+          New-Item -ItemType Directory -Path $extract | Out-Null
+
+          Write-Host "Extracting $($zip.Name)"
+          Expand-Archive -Path $zip.FullName -DestinationPath $extract -Force
+
+      - name: Find project folder
+        shell: pwsh
+        run: |
+          $package = Get-ChildItem `
+            -Path "$env:GITHUB_WORKSPACE\_project" `
+            -Recurse `
+            -Filter "package.json" `
+            -File |
+            Where-Object {
+              $_.FullName -notmatch "\\node_modules\\"
+            } |
+            Select-Object -First 1
+
+          if (-not $package) {
+            throw "package.json was not found inside the ZIP."
+          }
+
+          $projectDir = $package.Directory.FullName
+
+          Write-Host "Found package.json:"
+          Write-Host $package.FullName
+
+          Write-Host "Project directory:"
+          Write-Host $projectDir
+
+          "PROJECT_DIR=$projectDir" |
+            Out-File `
+            -FilePath $env:GITHUB_ENV `
+            -Encoding utf8 `
+            -Append
+
+      - name: Verify project
+        shell: pwsh
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if (-not (Test-Path "package.json")) {
+            throw "package.json not found."
+          }
+
+          Write-Host "package.json found successfully."
+
       - name: Install dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
         run: npm install
 
       - name: Build application
+        working-directory: ${{ env.PROJECT_DIR }}
         run: npm run build
 
       - name: Build Windows Setup
+        working-directory: ${{ env.PROJECT_DIR }}
         run: npx electron-builder --win nsis
+
+      - name: Find Setup EXE
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem `
+            -Path "${{ env.PROJECT_DIR }}" `
+            -Recurse `
+            -Filter "*.exe" `
+            -File |
+            Where-Object {
+              $_.FullName -notmatch "\\node_modules\\"
+            } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+
+          if (-not $exe) {
+            throw "Setup EXE was not generated."
+          }
+
+          Write-Host "EXE found:"
+          Write-Host $exe.FullName
+
+          $release = Join-Path $env:GITHUB_WORKSPACE "release"
+
+          New-Item `
+            -ItemType Directory `
+            -Path $release `
+            -Force | Out-Null
+
+          Copy-Item `
+            $exe.FullName `
+            (Join-Path $release "Muzammil-Online-Service-Setup.exe") `
+            -Force
 
       - name: Upload Setup EXE
         uses: actions/upload-artifact@v4
         with:
           name: Muzammil-Online-Service-PC-Setup
-          path: release/*.exe
+          path: release/Muzammil-Online-Service-Setup.exe
           if-no-files-found: error
