@@ -1,62 +1,39 @@
-name: Build Windows Desktop EXE Setup
+/**
+ * MUZAMMIL ONLINE SERVICE PC - WORKSTATION V2.0
+ * Standalone Node.js Runner Script
+ * Usage: node run-pc.js
+ */
 
-on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
-  release:
-    types: [ published ]
+import { spawn } from 'child_process';
+import { existsSync } from 'fs';
 
-jobs:
-  build-windows:
-    runs-on: windows-latest
+console.log('====================================================');
+console.log('  MUZAMMIL ONLINE SERVICE PC - WORKSTATION V2.0');
+console.log('  Local Node.js Workstation Engine Initializing...');
+console.log('====================================================');
 
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+if (!existsSync('./node_modules')) {
+  console.log('[INFO] First time setup detected! Installing dependencies...');
+  const install = spawn('npm', ['install', '--legacy-peer-deps'], { stdio: 'inherit', shell: true });
+  install.on('close', (code) => {
+    if (code === 0) startApp();
+    else console.error('[ERROR] Failed to install packages. Code:', code);
+  });
+} else {
+  startApp();
+}
 
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
+function startApp() {
+  console.log('[INFO] Launching Workstation Server on port 3000...');
+  const server = spawn('npm', ['run', 'dev'], { stdio: 'inherit', shell: true });
 
-      - name: Extract ZIP & Prepare Workspace
-        run: |
-          # Auto-extract any ZIP file uploaded by user
-          $zips = Get-ChildItem -Path . -Filter "*.zip" -File
-          foreach ($z in $zips) {
-            Write-Host "Auto-extracting: $($z.Name)..."
-            Expand-Archive -Path $z.FullName -DestinationPath . -Force
-          }
+  setTimeout(() => {
+    console.log('[INFO] Opening browser at http://localhost:3000');
+    const startCmd = process.platform === 'win32' ? 'start' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+    spawn(startCmd, ['http://localhost:3000'], { shell: true });
+  }, 3000);
 
-          # If extracted into a subfolder, bring everything to root
-          Get-ChildItem -Directory | ForEach-Object {
-            if (Test-Path "$($_.FullName)\package.json") {
-              Write-Host "Syncing subfolder contents to root..."
-              Copy-Item -Path "$($_.FullName)\*" -Destination . -Recurse -Force
-            }
-          }
-
-      - name: Install Dependencies
-        run: |
-          npm install --legacy-peer-deps
-          npm install --save-dev electron electron-packager --legacy-peer-deps
-
-      - name: Build Web Application Assets
-        run: |
-          npm run build
-
-      - name: Package Windows .EXE Application
-        run: |
-          npx electron-packager . "Muzammil Online service pc" --platform=win32 --arch=x64 --out=dist-exe --overwrite --prune=true
-
-      - name: Compress Executable Folder to ZIP
-        run: |
-          Compress-Archive -Path "dist-exe\Muzammil Online service pc-win32-x64\*" -DestinationPath "Muzammil-Online-Service-Windows-x64.zip"
-
-      - name: Upload Windows EXE Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Muzammil-Online-Service-Windows-x64
-          path: Muzammil-Online-Service-Windows-x64.zip
-          retention-days: 30
+  server.on('close', (code) => {
+    console.log('[INFO] Server stopped with code:', code);
+  });
+}
