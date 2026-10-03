@@ -1,335 +1,62 @@
-name: Build Windows Installer
+name: Build Windows Desktop EXE Setup
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
-
-permissions:
-  contents: read
+    branches: [ main, master ]
+  workflow_dispatch:
+  release:
+    types: [ published ]
 
 jobs:
   build-windows:
-    name: Build Windows Setup
     runs-on: windows-latest
 
     steps:
-      # --------------------------------------------------
-      # 1. Checkout repository
-      # --------------------------------------------------
-      - name: Checkout repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      # --------------------------------------------------
-      # 2. Setup Node.js
-      # --------------------------------------------------
-      - name: Setup Node.js
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
+          node-version: 20
 
-      # --------------------------------------------------
-      # 3. Find project ZIP
-      # --------------------------------------------------
-      - name: Find project ZIP
-        id: find_zip
-        shell: pwsh
+      - name: Extract ZIP & Prepare Workspace
         run: |
-          $zip = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Filter "*.zip" -File |
-            Select-Object -First 1
-
-          if (-not $zip) {
-            throw "Project ZIP file was not found."
+          # Auto-extract any ZIP file uploaded by user
+          $zips = Get-ChildItem -Path . -Filter "*.zip" -File
+          foreach ($z in $zips) {
+            Write-Host "Auto-extracting: $($z.Name)..."
+            Expand-Archive -Path $z.FullName -DestinationPath . -Force
           }
 
-          Write-Host "Found ZIP:"
-          Write-Host $zip.FullName
-
-          "ZIP_PATH=$($zip.FullName)" >> $env:GITHUB_ENV
-
-      # --------------------------------------------------
-      # 4. Extract project
-      # --------------------------------------------------
-      - name: Extract project
-        shell: pwsh
-        run: |
-          $extractPath = Join-Path $env:GITHUB_WORKSPACE "_project"
-
-          if (Test-Path $extractPath) {
-            Remove-Item $extractPath -Recurse -Force
+          # If extracted into a subfolder, bring everything to root
+          Get-ChildItem -Directory | ForEach-Object {
+            if (Test-Path "$($_.FullName)\package.json") {
+              Write-Host "Syncing subfolder contents to root..."
+              Copy-Item -Path "$($_.FullName)\*" -Destination . -Recurse -Force
+            }
           }
 
-          New-Item -ItemType Directory -Path $extractPath | Out-Null
-
-          Write-Host "Extracting:"
-          Write-Host $env:ZIP_PATH
-
-          Expand-Archive `
-            -Path $env:ZIP_PATH `
-            -DestinationPath $extractPath `
-            -Force
-
-          Write-Host "Extraction completed."
-
-      # --------------------------------------------------
-      # 5. Find package.json
-      # --------------------------------------------------
-      - name: Find Node project
-        shell: pwsh
+      - name: Install Dependencies
         run: |
-          $projectRoot = Join-Path $env:GITHUB_WORKSPACE "_project"
-
-          $package = Get-ChildItem `
-            -Path $projectRoot `
-            -Filter "package.json" `
-            -File `
-            -Recurse |
-            Where-Object {
-              $_.FullName -notmatch "\\node_modules\\"
-            } |
-            Select-Object -First 1
-
-          if (-not $package) {
-            throw "package.json was not found inside the extracted project."
-          }
-
-          $projectDir = $package.Directory.FullName
-
-          Write-Host "package.json found:"
-          Write-Host $package.FullName
-
-          Write-Host "Project directory:"
-          Write-Host $projectDir
-
-          "PROJECT_DIR=$projectDir" >> $env:GITHUB_ENV
-
-      # --------------------------------------------------
-      # 6. Verify project
-      # --------------------------------------------------
-      - name: Verify project
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: pwsh
-        run: |
-          Write-Host "Current project:"
-          Get-Location
-
-          Write-Host ""
-          Write-Host "Project files:"
-          Get-ChildItem -Force
-
-          if (-not (Test-Path "package.json")) {
-            throw "package.json not found."
-          }
-
-          Write-Host ""
-          Write-Host "package.json:"
-          Get-Content "package.json"
-
-      # --------------------------------------------------
-      # 7. Install dependencies
-      # --------------------------------------------------
-      - name: Install dependencies
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: pwsh
-        run: |
-          Write-Host "Installing dependencies..."
-
           npm install --legacy-peer-deps
+          npm install --save-dev electron electron-packager --legacy-peer-deps
 
-          if ($LASTEXITCODE -ne 0) {
-            throw "npm install failed."
-          }
-
-          Write-Host "Dependencies installed successfully."
-
-      # --------------------------------------------------
-      # 8. Repair stale Vite config
-      # --------------------------------------------------
-      - name: Repair Vite config
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: pwsh
+      - name: Build Web Application Assets
         run: |
-          $config = Join-Path $env:PROJECT_DIR "vite.config.ts"
-
-          if (-not (Test-Path $config)) {
-            throw "vite.config.ts was not found."
-          }
-
-          Write-Host "Original vite.config.ts:"
-          Get-Content $config -Raw
-
-          $content = Get-Content $config -Raw
-
-          # Fix stale Vite prebundle imports
-          $content = $content -replace `
-            '"/node_modules/\.vite/deps/@vitejs_plugin-react\.js\?v=[^"]+"', `
-            '"@vitejs/plugin-react"'
-
-          $content = $content -replace `
-            '"/node_modules/\.vite/deps/@tailwindcss_vite\.js\?v=[^"]+"', `
-            '"@tailwindcss/vite"'
-
-          $content = $content -replace `
-            '"/node_modules/\.vite/deps/vite\.js\?v=[^"]+"', `
-            '"vite"'
-
-          $content = $content -replace `
-            '"/@id/__vite-browser-external:path"', `
-            '"node:path"'
-
-          Set-Content `
-            -Path $config `
-            -Value $content `
-            -Encoding utf8
-
-          Write-Host ""
-          Write-Host "Repaired vite.config.ts:"
-          Get-Content $config -Raw
-
-      # --------------------------------------------------
-      # 9. Clean Vite cache
-      # --------------------------------------------------
-      - name: Clean Vite cache
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: pwsh
-        run: |
-          $viteCache = Join-Path $env:PROJECT_DIR "node_modules\.vite"
-
-          if (Test-Path $viteCache) {
-            Write-Host "Removing Vite cache..."
-            Remove-Item $viteCache -Recurse -Force
-          }
-
-          Write-Host "Vite cache cleaned."
-
-      # --------------------------------------------------
-      # 10. Verify important packages
-      # --------------------------------------------------
-      - name: Verify packages
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: pwsh
-        run: |
-          Write-Host "Checking installed packages..."
-
-          npm list vite --depth=0
-          npm list @vitejs/plugin-react --depth=0
-          npm list @tailwindcss/vite --depth=0
-          npm list electron --depth=0
-          npm list electron-builder --depth=0
-
-      # --------------------------------------------------
-      # 11. Build web application
-      # --------------------------------------------------
-      - name: Build application
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: pwsh
-        run: |
-          Write-Host "Running application build..."
-
           npm run build
 
-          if ($LASTEXITCODE -ne 0) {
-            throw "npm run build failed."
-          }
-
-          if (-not (Test-Path "dist")) {
-            throw "dist folder was not created."
-          }
-
-          Write-Host ""
-          Write-Host "Application build completed successfully."
-
-          Write-Host ""
-          Write-Host "dist contents:"
-          Get-ChildItem "dist" -Recurse
-
-      # --------------------------------------------------
-      # 12. Build Windows NSIS installer
-      # --------------------------------------------------
-      - name: Build Windows installer
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: pwsh
+      - name: Package Windows .EXE Application
         run: |
-          Write-Host "Building Windows NSIS installer..."
+          npx electron-packager . "Muzammil Online service pc" --platform=win32 --arch=x64 --out=dist-exe --overwrite --prune=true
 
-          npx electron-builder --win nsis
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "electron-builder failed."
-          }
-
-          Write-Host ""
-          Write-Host "Windows installer build completed."
-
-      # --------------------------------------------------
-      # 13. Find generated EXE
-      # --------------------------------------------------
-      - name: Find installer
-        id: find_installer
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: pwsh
+      - name: Compress Executable Folder to ZIP
         run: |
-          $releaseDir = Join-Path $env:PROJECT_DIR "release"
+          Compress-Archive -Path "dist-exe\Muzammil Online service pc-win32-x64\*" -DestinationPath "Muzammil-Online-Service-Windows-x64.zip"
 
-          if (-not (Test-Path $releaseDir)) {
-            throw "release folder was not created."
-          }
-
-          Write-Host "Release contents:"
-          Get-ChildItem $releaseDir -Recurse
-
-          $exe = Get-ChildItem `
-            -Path $releaseDir `
-            -Filter "*.exe" `
-            -File |
-            Where-Object {
-              $_.Name -notmatch "uninstaller"
-            } |
-            Select-Object -First 1
-
-          if (-not $exe) {
-            throw "Windows installer EXE was not found."
-          }
-
-          Write-Host ""
-          Write-Host "Installer found:"
-          Write-Host $exe.FullName
-
-          "INSTALLER_PATH=$($exe.FullName)" >> $env:GITHUB_ENV
-
-      # --------------------------------------------------
-      # 14. Copy installer to workspace
-      # --------------------------------------------------
-      - name: Prepare installer
-        shell: pwsh
-        run: |
-          $outputDir = Join-Path $env:GITHUB_WORKSPACE "windows-installer"
-
-          if (Test-Path $outputDir) {
-            Remove-Item $outputDir -Recurse -Force
-          }
-
-          New-Item -ItemType Directory -Path $outputDir | Out-Null
-
-          Copy-Item `
-            -Path $env:INSTALLER_PATH `
-            -Destination $outputDir `
-            -Force
-
-          Write-Host "Installer copied."
-
-          Get-ChildItem $outputDir
-
-      # --------------------------------------------------
-      # 15. Upload Setup.exe as GitHub artifact
-      # --------------------------------------------------
-      - name: Upload Windows Setup
+      - name: Upload Windows EXE Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Muzammil-Online-Service-PC-Windows-Setup
-          path: windows-installer/*.exe
-          if-no-files-found: error
+          name: Muzammil-Online-Service-Windows-x64
+          path: Muzammil-Online-Service-Windows-x64.zip
           retention-days: 30
